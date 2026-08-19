@@ -79,41 +79,61 @@
     </div>
 
     <script>
-        const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
-        const CHAR_UUID    = "0000ffe4-0000-1000-8000-00805f9b34fb";
-
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv  = document.getElementById('status');
 
         connectBtn.addEventListener('click', async () => {
             if (!navigator.bluetooth) {
-                alert("La Web Bluetooth API n'est pas supportée sur ce navigateur/appareil.");
+                alert("La Web Bluetooth API n'est pas supportée.");
                 return;
             }
 
             try {
                 statusDiv.innerText = "Recherche du capteur...";
+                // On accepte tous les services pour éviter l'erreur UUID
                 const device = await navigator.bluetooth.requestDevice({
                     filters: [{ namePrefix: "WT" }],
-                    optionalServices: [SERVICE_UUID]
+                    optionalServices: [
+                        "0000ffe0-0000-1000-8000-00805f9b34fb",
+                        "0000ffe5-0000-1000-8000-00805f9b34fb",
+                        "00000001-0000-1000-8000-00805f9b34fb",
+                        "0000180f-0000-1000-8000-00805f9b34fb"
+                    ]
                 });
 
-                statusDiv.innerText = "Connexion au serveur GATT...";
+                statusDiv.innerText = "Connexion...";
                 device.addEventListener('gattserverdisconnected', () => {
                     statusDiv.innerText = "Déconnecté";
                     statusDiv.style.color = "#f44336";
                 });
 
                 const server = await device.gatt.connect();
-                statusDiv.innerText = "Recherche des services...";
+                statusDiv.innerText = "Analyse des services...";
 
-                const service = await server.getPrimaryService(SERVICE_UUID);
-                const characteristic = await service.getCharacteristic(CHAR_UUID);
+                // Exploration automatique des services disponibles
+                const services = await server.getPrimaryServices();
+                let targetChar = null;
 
-                await characteristic.startNotifications();
-                characteristic.addEventListener('characteristicvaluechanged', handleData);
+                for (const service of services) {
+                    const characteristics = await service.getCharacteristics();
+                    for (const char of characteristics) {
+                        if (char.properties.notify || char.properties.indicate) {
+                            targetChar = char;
+                            console.log("Caractéristique trouvée :", char.uuid);
+                            break;
+                        }
+                    }
+                    if (targetChar) break;
+                }
 
-                statusDiv.innerText = "Connecté & Réception des données";
+                if (!targetChar) {
+                    throw new Error("Aucune caractéristique de notification trouvée.");
+                }
+
+                await targetChar.startNotifications();
+                targetChar.addEventListener('characteristicvaluechanged', handleData);
+
+                statusDiv.innerText = "Connecté & Réception active !";
                 statusDiv.style.color = "#4caf50";
 
             } catch (error) {
@@ -126,12 +146,11 @@
         function handleData(event) {
             const data = new Uint8Array(event.target.value.buffer);
 
-            // Traitement par paquets de 11 octets (Protocole WitMotion)
             for (let i = 0; i < data.length - 10; i++) {
                 if (data[i] === 0x55) {
                     const type = data[i + 1];
 
-                    // Trame Angle : 0x55 0x53
+                    // Angle (Roll, Pitch, Yaw)
                     if (type === 0x53) {
                         const rollRaw  = readInt16LE(data, i + 2);
                         const pitchRaw = readInt16LE(data, i + 4);
@@ -146,11 +165,10 @@
                         document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
-                    // Trame Statut / Batterie : 0x55 0x64 (ou version selon firmware)
+                    // Statut / Batterie (Tension en mV)
                     if (type === 0x64) {
-                        const vRaw = readInt16LE(data, i + 2); // Tension en mV
+                        const vRaw = readInt16LE(data, i + 2);
                         if (vRaw > 0) {
-                            // Estimation basique du pourcentage LiPo 3.7V (3.4V = 0%, 4.1V = 100%)
                             let pct = Math.round(((vRaw - 3400) / (4100 - 3400)) * 100);
                             pct = Math.max(0, Math.min(100, pct));
                             document.getElementById('batt').innerText = `${pct}% (${(vRaw/1000).toFixed(2)}V)`;
@@ -162,7 +180,7 @@
 
         function readInt16LE(buffer, offset) {
             let val = buffer[offset] | (buffer[offset + 1] << 8);
-            if (val & 0x8000) val |= ~0xFFFF; // Extension de signe pour les entiers négatifs
+            if (val & 0x8000) val |= ~0xFFFF;
             return val;
         }
     </script>
