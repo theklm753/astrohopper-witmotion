@@ -51,11 +51,27 @@
         .card-title { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; }
         .card-value { font-size: 1.8rem; font-weight: bold; color: #00e676; }
         .batt-card .card-value { color: #ffeb3b; }
+        
+        /* Zone de debug brut */
+        #debug {
+            margin-top: 20px;
+            width: 100%;
+            max-width: 500px;
+            background: #000;
+            color: #00ff00;
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 0.8rem;
+            word-break: break-all;
+            min-height: 50px;
+            border: 1px solid #444;
+        }
     </style>
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL-2</h1>
+    <h1>WitMotion WT9011DCL</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -78,11 +94,13 @@
         </div>
     </div>
 
+    <div id="debug">Dernières données brutes reçues (HEX) : <br>En attente...</div>
+
     <script>
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv  = document.getElementById('status');
+        const debugDiv   = document.getElementById('debug');
 
-        // Service UUID extrait directement de votre diagnostic bluetooth-internals
         const WIT_SERVICES = [
             "0000ffe5-0000-1000-8000-00805f9a34fb",
             "00001800-0000-1000-8000-00805f9b34fb",
@@ -91,7 +109,7 @@
 
         connectBtn.addEventListener('click', async () => {
             if (!navigator.bluetooth) {
-                alert("La Web Bluetooth API n'est pas supportée sur ce navigateur/appareil.");
+                alert("La Web Bluetooth API n'est pas supportée.");
                 return;
             }
 
@@ -99,10 +117,7 @@
                 statusDiv.innerText = "Recherche du capteur...";
                 
                 const device = await navigator.bluetooth.requestDevice({
-                    filters: [
-                        { namePrefix: "WT901" },
-                        { namePrefix: "WT" }
-                    ],
+                    filters: [{ namePrefix: "WT" }],
                     optionalServices: WIT_SERVICES
                 });
 
@@ -113,9 +128,8 @@
                 });
 
                 const server = await device.gatt.connect();
-                statusDiv.innerText = "Analyse des services...";
+                statusDiv.innerText = "Accès au service...";
 
-                // Récupération directe du service FFE5 de WitMotion
                 const service = await server.getPrimaryService("0000ffe5-0000-1000-8000-00805f9a34fb");
                 const characteristics = await service.getCharacteristics();
                 
@@ -123,13 +137,12 @@
                 for (const char of characteristics) {
                     if (char.properties.notify || char.properties.indicate) {
                         targetChar = char;
-                        console.log("Caractéristique active trouvée :", char.uuid);
                         break;
                     }
                 }
 
                 if (!targetChar) {
-                    throw new Error("Flux de données introuvable dans le service FFE5.");
+                    throw new Error("Caractéristique notifiable introuvable.");
                 }
 
                 await targetChar.startNotifications();
@@ -148,12 +161,19 @@
         function handleData(event) {
             const data = new Uint8Array(event.target.value.buffer);
 
-            for (let i = 0; i < data.length - 10; i++) {
+            // Affiche les octets bruts reçus en Hexadécimal
+            const hexString = Array.from(data)
+                .map(b => b.toString(16).padStart(2, '0').toUpperCase())
+                .join(' ');
+            debugDiv.innerHTML = `Octets reçus (${data.length} bytes) :<br><code>${hexString}</code>`;
+
+            // Traitement standard (trame commençant par 0x55)
+            for (let i = 0; i < data.length - 1; i++) {
                 if (data[i] === 0x55) {
                     const type = data[i + 1];
 
-                    // Trame d'angle : 0x55 0x53
-                    if (type === 0x53) {
+                    // Angle : 0x53
+                    if (type === 0x53 && (i + 7) < data.length) {
                         const rollRaw  = readInt16LE(data, i + 2);
                         const pitchRaw = readInt16LE(data, i + 4);
                         const yawRaw   = readInt16LE(data, i + 6);
@@ -167,8 +187,8 @@
                         document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
-                    // Trame de tension / batterie : 0x55 0x64 ou 0x55 0x71
-                    if (type === 0x64 || type === 0x71) {
+                    // Batterie / Voltage : 0x64 ou 0x71
+                    if ((type === 0x64 || type === 0x71) && (i + 3) < data.length) {
                         const vRaw = readInt16LE(data, i + 2);
                         if (vRaw > 0) {
                             let pct = Math.round(((vRaw - 3400) / (4100 - 3400)) * 100);
