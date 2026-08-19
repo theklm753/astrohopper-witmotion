@@ -55,7 +55,7 @@
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL-2</h1>
+    <h1>WitMotion WT9011DCL</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -82,6 +82,13 @@
         const connectBtn = document.getElementById('connectBtn');
         const statusDiv  = document.getElementById('status');
 
+        // Service UUID extrait directement de votre diagnostic bluetooth-internals
+        const WIT_SERVICES = [
+            "0000ffe5-0000-1000-8000-00805f9b34fb",
+            "00001800-0000-1000-8000-00805f9b34fb",
+            "00001801-0000-1000-8000-00805f9b34fb"
+        ];
+
         connectBtn.addEventListener('click', async () => {
             if (!navigator.bluetooth) {
                 alert("La Web Bluetooth API n'est pas supportée sur ce navigateur/appareil.");
@@ -91,17 +98,15 @@
             try {
                 statusDiv.innerText = "Recherche du capteur...";
                 
-                // acceptAllDevices évite les blocages de sécurité sur les UUIDs inconnus
                 const device = await navigator.bluetooth.requestDevice({
-                    acceptAllDevices: true,
-                    optionalServices: [
-                        "0000ffe0-0000-1000-8000-00805f9b34fb",
-                        "0000ffe5-0000-1000-8000-00805f9b34fb",
-                        "0000180f-0000-1000-8000-00805f9b34fb"
-                    ]
+                    filters: [
+                        { namePrefix: "WT901" },
+                        { namePrefix: "WT" }
+                    ],
+                    optionalServices: WIT_SERVICES
                 });
 
-                statusDiv.innerText = "Connexion au capteur...";
+                statusDiv.innerText = "Connexion...";
                 device.addEventListener('gattserverdisconnected', () => {
                     statusDiv.innerText = "Déconnecté";
                     statusDiv.style.color = "#f44336";
@@ -110,33 +115,27 @@
                 const server = await device.gatt.connect();
                 statusDiv.innerText = "Analyse des services...";
 
-                const services = await server.getPrimaryServices();
+                // Récupération directe du service FFE5 de WitMotion
+                const service = await server.getPrimaryService("0000ffe5-0000-1000-8000-00805f9b34fb");
+                const characteristics = await service.getCharacteristics();
+                
                 let targetChar = null;
-
-                for (const service of services) {
-                    try {
-                        const characteristics = await service.getCharacteristics();
-                        for (const char of characteristics) {
-                            if (char.properties.notify || char.properties.indicate) {
-                                targetChar = char;
-                                console.log("Caractéristique active trouvée :", char.uuid);
-                                break;
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("Service ignoré :", service.uuid);
+                for (const char of characteristics) {
+                    if (char.properties.notify || char.properties.indicate) {
+                        targetChar = char;
+                        console.log("Caractéristique active trouvée :", char.uuid);
+                        break;
                     }
-                    if (targetChar) break;
                 }
 
                 if (!targetChar) {
-                    throw new Error("Aucun flux de données détecté sur cet appareil.");
+                    throw new Error("Flux de données introuvable dans le service FFE5.");
                 }
 
                 await targetChar.startNotifications();
                 targetChar.addEventListener('characteristicvaluechanged', handleData);
 
-                statusDiv.innerText = "Connecté & Réception des données !";
+                statusDiv.innerText = "Connecté & Réception en cours !";
                 statusDiv.style.color = "#4caf50";
 
             } catch (error) {
@@ -153,7 +152,7 @@
                 if (data[i] === 0x55) {
                     const type = data[i + 1];
 
-                    // Angles (Roll, Pitch, Yaw)
+                    // Trame d'angle : 0x55 0x53
                     if (type === 0x53) {
                         const rollRaw  = readInt16LE(data, i + 2);
                         const pitchRaw = readInt16LE(data, i + 4);
@@ -168,7 +167,7 @@
                         document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
-                    // Batterie / Voltage (0x55 0x64 ou 0x55 0x71)
+                    // Trame de tension / batterie : 0x55 0x64 ou 0x55 0x71
                     if (type === 0x64 || type === 0x71) {
                         const vRaw = readInt16LE(data, i + 2);
                         if (vRaw > 0) {
