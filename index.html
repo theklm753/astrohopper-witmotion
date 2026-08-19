@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WitMotion WT9011DCL - Test BLE</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        h1 { color: #4da6ff; margin-bottom: 20px; text-align: center; }
+        button {
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background-color 0.2s;
+        }
+        button:hover { background-color: #0b7dda; }
+        .status { margin-top: 15px; font-weight: bold; color: #ff9800; }
+        .card-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 15px;
+            width: 100%;
+            max-width: 500px;
+            margin-top: 25px;
+        }
+        .card {
+            background-color: #1e1e1e;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            border: 1px solid #333;
+        }
+        .card-title { font-size: 0.9rem; color: #aaa; margin-bottom: 5px; }
+        .card-value { font-size: 1.8rem; font-weight: bold; color: #00e676; }
+        .batt-card .card-value { color: #ffeb3b; }
+    </style>
+</head>
+<body>
+
+    <h1>WitMotion WT9011DCL</h1>
+    <button id="connectBtn">Connecter le capteur BLE</button>
+    <div id="status" class="status">Déconnecté</div>
+
+    <div class="card-container">
+        <div class="card">
+            <div class="card-title">ROLL (Roulis)</div>
+            <div class="card-value"><span id="roll">--</span>°</div>
+        </div>
+        <div class="card">
+            <div class="card-title">PITCH (Tangage)</div>
+            <div class="card-value"><span id="pitch">--</span>°</div>
+        </div>
+        <div class="card">
+            <div class="card-title">YAW (Azimut)</div>
+            <div class="card-value"><span id="yaw">--</span>°</div>
+        </div>
+        <div class="card batt-card">
+            <div class="card-title">BATTERIE</div>
+            <div class="card-value"><span id="batt">--</span></div>
+        </div>
+    </div>
+
+    <script>
+        const SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb";
+        const CHAR_UUID    = "0000ffe4-0000-1000-8000-00805f9b34fb";
+
+        const connectBtn = document.getElementById('connectBtn');
+        const statusDiv  = document.getElementById('status');
+
+        connectBtn.addEventListener('click', async () => {
+            if (!navigator.bluetooth) {
+                alert("La Web Bluetooth API n'est pas supportée sur ce navigateur/appareil.");
+                return;
+            }
+
+            try {
+                statusDiv.innerText = "Recherche du capteur...";
+                const device = await navigator.bluetooth.requestDevice({
+                    filters: [{ namePrefix: "WT" }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                statusDiv.innerText = "Connexion au serveur GATT...";
+                device.addEventListener('gattserverdisconnected', () => {
+                    statusDiv.innerText = "Déconnecté";
+                    statusDiv.style.color = "#f44336";
+                });
+
+                const server = await device.gatt.connect();
+                statusDiv.innerText = "Recherche des services...";
+
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                const characteristic = await service.getCharacteristic(CHAR_UUID);
+
+                await characteristic.startNotifications();
+                characteristic.addEventListener('characteristicvaluechanged', handleData);
+
+                statusDiv.innerText = "Connecté & Réception des données";
+                statusDiv.style.color = "#4caf50";
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.innerText = "Erreur : " + error.message;
+                statusDiv.style.color = "#f44336";
+            }
+        });
+
+        function handleData(event) {
+            const data = new Uint8Array(event.target.value.buffer);
+
+            // Traitement par paquets de 11 octets (Protocole WitMotion)
+            for (let i = 0; i < data.length - 10; i++) {
+                if (data[i] === 0x55) {
+                    const type = data[i + 1];
+
+                    // Trame Angle : 0x55 0x53
+                    if (type === 0x53) {
+                        const rollRaw  = readInt16LE(data, i + 2);
+                        const pitchRaw = readInt16LE(data, i + 4);
+                        const yawRaw   = readInt16LE(data, i + 6);
+
+                        const roll  = (rollRaw / 32768.0) * 180.0;
+                        const pitch = (pitchRaw / 32768.0) * 180.0;
+                        const yaw   = (yawRaw / 32768.0) * 180.0;
+
+                        document.getElementById('roll').innerText  = roll.toFixed(2);
+                        document.getElementById('pitch').innerText = pitch.toFixed(2);
+                        document.getElementById('yaw').innerText   = yaw.toFixed(2);
+                    }
+
+                    // Trame Statut / Batterie : 0x55 0x64 (ou version selon firmware)
+                    if (type === 0x64) {
+                        const vRaw = readInt16LE(data, i + 2); // Tension en mV
+                        if (vRaw > 0) {
+                            // Estimation basique du pourcentage LiPo 3.7V (3.4V = 0%, 4.1V = 100%)
+                            let pct = Math.round(((vRaw - 3400) / (4100 - 3400)) * 100);
+                            pct = Math.max(0, Math.min(100, pct));
+                            document.getElementById('batt').innerText = `${pct}% (${(vRaw/1000).toFixed(2)}V)`;
+                        }
+                    }
+                }
+            }
+        }
+
+        function readInt16LE(buffer, offset) {
+            let val = buffer[offset] | (buffer[offset + 1] << 8);
+            if (val & 0x8000) val |= ~0xFFFF; // Extension de signe pour les entiers négatifs
+            return val;
+        }
+    </script>
+</body>
+</html>
