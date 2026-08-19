@@ -55,7 +55,7 @@
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL</h1>
+    <h1>WitMotion WT9011DCL-2</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -116,7 +116,7 @@
                 statusDiv.innerText = "Analyse des services...";
 
                 // Récupération directe du service FFE5 de WitMotion
-                const service = await server.getPrimaryService("0000ffe5-0000-1000-8000-00805f9b34fb");
+                const service = await server.getPrimaryService("0000ffe5-0000-1000-8000-00805f9a34fb");
                 const characteristics = await service.getCharacteristics();
                 
                 let targetChar = null;
