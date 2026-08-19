@@ -70,7 +70,7 @@
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL-2</h1>
+    <h1>WitMotion WT9011DCL</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -132,20 +132,34 @@
                 const service = await server.getPrimaryService("0000ffe5-0000-1000-8000-00805f9a34fb");
                 const characteristics = await service.getCharacteristics();
                 
-                let targetChar = null;
+                let notifyChar = null;
+                let writeChar  = null;
+
                 for (const char of characteristics) {
                     if (char.properties.notify || char.properties.indicate) {
-                        targetChar = char;
-                        break;
+                        notifyChar = char;
+                    }
+                    if (char.properties.write || char.properties.writeWithoutResponse) {
+                        writeChar = char;
                     }
                 }
 
-                if (!targetChar) {
+                if (!notifyChar) {
                     throw new Error("Caractéristique notifiable introuvable.");
                 }
 
-                await targetChar.startNotifications();
-                targetChar.addEventListener('characteristicvaluechanged', handleData);
+                await notifyChar.startNotifications();
+                notifyChar.addEventListener('characteristicvaluechanged', handleData);
+
+                // Envoie de la commande pour lire la batterie (Registre 0x64 / Voltage)
+                if (writeChar) {
+                    try {
+                        const readBattCmd = new Uint8Array([0xFF, 0xAA, 0x27, 0x64, 0x00]);
+                        await writeChar.writeValue(readBattCmd);
+                    } catch (e) {
+                        console.warn("Impossible d'envoyer la commande d'interrogation batterie:", e);
+                    }
+                }
 
                 statusDiv.innerText = "Connecté & Réception en cours !";
                 statusDiv.style.color = "#4caf50";
@@ -170,7 +184,6 @@
                     const type = data[i + 1];
 
                     // Trame combinée BLE 5.0 (0x61)
-                    // Structure : AccX(2), AccY(2), AccZ(2), GyroX(2), GyroY(2), GyroZ(2), Roll(2), Pitch(2), Yaw(2)
                     if (type === 0x61 && (i + 19) < data.length) {
                         const rollRaw  = readInt16LE(data, i + 14);
                         const pitchRaw = readInt16LE(data, i + 16);
@@ -185,31 +198,33 @@
                         document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
-                    // Trame standard Angle : 0x53
-                    if (type === 0x53 && (i + 7) < data.length) {
-                        const rollRaw  = readInt16LE(data, i + 2);
-                        const pitchRaw = readInt16LE(data, i + 4);
-                        const yawRaw   = readInt16LE(data, i + 6);
+                    // Trame réponse Registre (0x71) - Contient la réponse aux requêtes de lecture
+                    if (type === 0x71 && (i + 4) < data.length) {
+                        const reg = data[i + 2] | (data[i + 3] << 8); // Registre interrogé
+                        const val = readInt16LE(data, i + 4);
 
-                        const roll  = (rollRaw / 32768.0) * 180.0;
-                        const pitch = (pitchRaw / 32768.0) * 180.0;
-                        const yaw   = (yawRaw / 32768.0) * 180.0;
-
-                        document.getElementById('roll').innerText  = roll.toFixed(2);
-                        document.getElementById('pitch').innerText = pitch.toFixed(2);
-                        document.getElementById('yaw').innerText   = yaw.toFixed(2);
-                    }
-
-                    // Batterie : 0x64 ou 0x71
-                    if ((type === 0x64 || type === 0x71) && (i + 3) < data.length) {
-                        const vRaw = readInt16LE(data, i + 2);
-                        if (vRaw > 0) {
-                            let pct = Math.round(((vRaw - 3400) / (4100 - 3400)) * 100);
-                            pct = Math.max(0, Math.min(100, pct));
-                            document.getElementById('batt').innerText = `${pct}% (${(vRaw/1000).toFixed(2)}V)`;
+                        // Registre 0x64 = Voltage batterie
+                        if (reg === 0x0064 || reg === 0x64) {
+                            updateBatteryDisplay(val);
                         }
                     }
+
+                    // Trame Batterie standard (0x64)
+                    if (type === 0x64 && (i + 3) < data.length) {
+                        const vRaw = readInt16LE(data, i + 2);
+                        updateBatteryDisplay(vRaw);
+                    }
                 }
+            }
+        }
+
+        function updateBatteryDisplay(vRaw) {
+            if (vRaw > 0) {
+                // Tension en millivolts (ex: 3950 mV = 3.95V)
+                // Estimation LiPo : 3400 mV = 0%, 4100 mV = 100%
+                let pct = Math.round(((vRaw - 3400) / (4100 - 3400)) * 100);
+                pct = Math.max(0, Math.min(100, pct));
+                document.getElementById('batt').innerText = `${pct}% (${(vRaw/1000).toFixed(2)}V)`;
             }
         }
 
