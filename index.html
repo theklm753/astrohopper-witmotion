@@ -33,27 +33,37 @@
         button:hover { background-color: #0b7dda; }
         .status { margin-top: 10px; font-weight: bold; color: #ff9800; text-align: center; }
         
-        .grid-container {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-            gap: 12px;
+        .section-title {
             width: 100%;
             max-width: 650px;
             margin-top: 20px;
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+            gap: 10px;
+            width: 100%;
+            max-width: 650px;
         }
         .card {
             background-color: #1e1e1e;
-            padding: 15px;
-            border-radius: 10px;
+            padding: 12px;
+            border-radius: 8px;
             text-align: center;
             box-shadow: 0 2px 4px rgba(0,0,0,0.5);
             border: 1px solid #333;
         }
-        .card-title { font-size: 0.8rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; }
+        .card-title { font-size: 0.75rem; color: #aaa; margin-bottom: 5px; text-transform: uppercase; }
         .card-value { font-size: 1.3rem; font-weight: bold; color: #00e676; }
+        .acc-card .card-value { color: #ab47bc; }
         .batt-card .card-value { color: #ffeb3b; }
         .temp-card .card-value { color: #ff7043; }
-        .mag-card .card-value { color: #29b6f6; }
         
         #debug {
             margin-top: 20px;
@@ -78,34 +88,27 @@
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
+    <!-- ACCÉLÉRATION -->
+    <div class="section-title">Accélération (g)</div>
     <div class="grid-container">
-        <!-- Roulis, Tangage, Cap -->
-        <div class="card">
-            <div class="card-title">Angles (R/P/Y)</div>
-            <div class="card-value"><span id="angles">-- / -- / --</span>°</div>
-        </div>
-        
-        <!-- Température & Batterie -->
-        <div class="card temp-card">
-            <div class="card-title">Température</div>
-            <div class="card-value"><span id="temp">--</span> °C</div>
-        </div>
-        <div class="card batt-card">
-            <div class="card-title">Batterie</div>
-            <div class="card-value"><span id="batt">--</span></div>
-        </div>
+        <div class="card acc-card"><div class="card-title">Acc X</div><div class="card-value"><span id="accX">--</span></div></div>
+        <div class="card acc-card"><div class="card-title">Acc Y</div><div class="card-value"><span id="accY">--</span></div></div>
+        <div class="card acc-card"><div class="card-title">Acc Z</div><div class="card-value"><span id="accZ">--</span></div></div>
+    </div>
 
-        <!-- Champ Magnétique -->
-        <div class="card mag-card">
-            <div class="card-title">Champ Mag. (X/Y/Z)</div>
-            <div class="card-value" style="font-size: 1rem;"><span id="mag">-- / -- / --</span> µT</div>
-        </div>
+    <!-- ANGLES -->
+    <div class="section-title">Angles (°)</div>
+    <div class="grid-container">
+        <div class="card"><div class="card-title">Roll (X)</div><div class="card-value"><span id="roll">--</span>°</div></div>
+        <div class="card"><div class="card-title">Pitch (Y)</div><div class="card-value"><span id="pitch">--</span>°</div></div>
+        <div class="card"><div class="card-title">Yaw (Z)</div><div class="card-value"><span id="yaw">--</span>°</div></div>
+    </div>
 
-        <!-- Quaternions -->
-        <div class="card">
-            <div class="card-title">Quaternions (Q0-Q3)</div>
-            <div class="card-value" style="font-size: 0.9rem;"><span id="quat">--</span></div>
-        </div>
+    <!-- ÉTAT CAPTEUR -->
+    <div class="section-title">Système</div>
+    <div class="grid-container">
+        <div class="card temp-card"><div class="card-title">Température</div><div class="card-value"><span id="temp">--</span> °C</div></div>
+        <div class="card batt-card"><div class="card-title">Batterie</div><div class="card-value"><span id="batt">--</span></div></div>
     </div>
 
     <div id="debug">Trame reçue (HEX) : <br>En attente...</div>
@@ -163,15 +166,19 @@
                 await notifyChar.startNotifications();
                 notifyChar.addEventListener('characteristicvaluechanged', handleData);
 
-                // Requetes initiales pour lire Température (0x40), Magnétisme (0x3A), Quaternions (0x51) et Batterie (0x64)
                 if (writeChar) {
-                    await sendCmd(0x40); // Temp
-                    await sendCmd(0x3A); // Mag
-                    await sendCmd(0x51); // Quat
+                    // Délai pour laisser le bus de communication se stabiliser
+                    await new Promise(r => setTimeout(r, 300));
+                    await sendCmd(0x40); // Demander la température (Registre 0x40)
                     
-                    // Boucle rafraîchissement batterie toutes les 10s
-                    await sendCmd(0x64);
-                    battInterval = setInterval(() => sendCmd(0x64), 10000);
+                    await new Promise(r => setTimeout(r, 200));
+                    await sendCmd(0x64); // Demander la batterie (Registre 0x64)
+
+                    // Rafraîchir Température + Batterie toutes les 10 secondes
+                    battInterval = setInterval(async () => {
+                        await sendCmd(0x40);
+                        await sendCmd(0x64);
+                    }, 10000);
                 }
 
                 statusDiv.innerText = "Connecté !";
@@ -187,7 +194,6 @@
         async function sendCmd(regHex) {
             if (!writeChar) return;
             try {
-                // Syntaxe constructeur : FF AA 27 [REG] 00
                 const cmd = new Uint8Array([0xFF, 0xAA, 0x27, regHex, 0x00]);
                 await writeChar.writeValue(cmd);
             } catch (e) {
@@ -207,14 +213,25 @@
                 if (data[i] === 0x55) {
                     const type = data[i + 1];
 
-                    // Trame standard BLE (0x61) -> Angles
+                    // Trame standard BLE (0x61) -> Accélérations & Angles
                     if (type === 0x61 && (i + 19) < data.length) {
+                        // Accélération (Formule doc: (Raw / 32768) * 16g)
+                        const accX = (readInt16LE(data, i + 2)  / 32768.0) * 16.0;
+                        const accY = (readInt16LE(data, i + 4)  / 32768.0) * 16.0;
+                        const accZ = (readInt16LE(data, i + 6)  / 32768.0) * 16.0;
+
+                        // Angles (Formule doc: (Raw / 32768) * 180 deg)
                         const roll  = (readInt16LE(data, i + 14) / 32768.0) * 180.0;
                         const pitch = (readInt16LE(data, i + 16) / 32768.0) * 180.0;
                         const yaw   = (readInt16LE(data, i + 18) / 32768.0) * 180.0;
 
-                        document.getElementById('angles').innerText = 
-                            `${roll.toFixed(1)} / ${pitch.toFixed(1)} / ${yaw.toFixed(1)}`;
+                        document.getElementById('accX').innerText = accX.toFixed(2);
+                        document.getElementById('accY').innerText = accY.toFixed(2);
+                        document.getElementById('accZ').innerText = accZ.toFixed(2);
+
+                        document.getElementById('roll').innerText  = roll.toFixed(2);
+                        document.getElementById('pitch').innerText = pitch.toFixed(2);
+                        document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
                     // Trame réponse Registre (0x71)
@@ -227,29 +244,10 @@
                             updateBatteryDisplay(vRaw);
                         }
 
-                        // Registre 0x40 = Température (Formule : Val / 100 °C)
+                        // Registre 0x40 = Température (Formule doc: Raw / 100 °C)
                         if (reg === 0x40) {
                             const tempRaw = readInt16LE(data, i + 4);
                             document.getElementById('temp').innerText = (tempRaw / 100.0).toFixed(1);
-                        }
-
-                        // Registre 0x3A = Champ Magnétique (Formule : Hx, Hy, Hz / 150 uT)
-                        if (reg === 0x3A && (i + 9) < data.length) {
-                            const hx = readInt16LE(data, i + 4) / 150.0;
-                            const hy = readInt16LE(data, i + 6) / 150.0;
-                            const hz = readInt16LE(data, i + 8) / 150.0;
-                            document.getElementById('mag').innerText = 
-                                `${hx.toFixed(1)}, ${hy.toFixed(1)}, ${hz.toFixed(1)}`;
-                        }
-
-                        // Registre 0x51 = Quaternions (Formule : Q / 32768)
-                        if (reg === 0x51 && (i + 11) < data.length) {
-                            const q0 = readInt16LE(data, i + 4) / 32768.0;
-                            const q1 = readInt16LE(data, i + 6) / 32768.0;
-                            const q2 = readInt16LE(data, i + 8) / 32768.0;
-                            const q3 = readInt16LE(data, i + 10) / 32768.0;
-                            document.getElementById('quat').innerText = 
-                                `${q0.toFixed(2)}, ${q1.toFixed(2)}, ${q2.toFixed(2)}, ${q3.toFixed(2)}`;
                         }
                     }
                 }
@@ -258,7 +256,7 @@
 
         function updateBatteryDisplay(vRaw) {
             if (vRaw <= 0) return;
-            const volts = vRaw / 100.0; // 413 = 4.13V
+            const volts = vRaw / 100.0;
             let pct = 0;
 
             if (vRaw >= 413) pct = 100;
