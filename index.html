@@ -52,7 +52,6 @@
         .card-value { font-size: 1.8rem; font-weight: bold; color: #00e676; }
         .batt-card .card-value { color: #ffeb3b; }
         
-        /* Zone de debug brut */
         #debug {
             margin-top: 20px;
             width: 100%;
@@ -71,7 +70,7 @@
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL</h1>
+    <h1>WitMotion WT9011DCL-2</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -161,18 +160,32 @@
         function handleData(event) {
             const data = new Uint8Array(event.target.value.buffer);
 
-            // Affiche les octets bruts reçus en Hexadécimal
             const hexString = Array.from(data)
                 .map(b => b.toString(16).padStart(2, '0').toUpperCase())
                 .join(' ');
             debugDiv.innerHTML = `Octets reçus (${data.length} bytes) :<br><code>${hexString}</code>`;
 
-            // Traitement standard (trame commençant par 0x55)
             for (let i = 0; i < data.length - 1; i++) {
                 if (data[i] === 0x55) {
                     const type = data[i + 1];
 
-                    // Angle : 0x53
+                    // Trame combinée BLE 5.0 (0x61)
+                    // Structure : AccX(2), AccY(2), AccZ(2), GyroX(2), GyroY(2), GyroZ(2), Roll(2), Pitch(2), Yaw(2)
+                    if (type === 0x61 && (i + 19) < data.length) {
+                        const rollRaw  = readInt16LE(data, i + 14);
+                        const pitchRaw = readInt16LE(data, i + 16);
+                        const yawRaw   = readInt16LE(data, i + 18);
+
+                        const roll  = (rollRaw / 32768.0) * 180.0;
+                        const pitch = (pitchRaw / 32768.0) * 180.0;
+                        const yaw   = (yawRaw / 32768.0) * 180.0;
+
+                        document.getElementById('roll').innerText  = roll.toFixed(2);
+                        document.getElementById('pitch').innerText = pitch.toFixed(2);
+                        document.getElementById('yaw').innerText   = yaw.toFixed(2);
+                    }
+
+                    // Trame standard Angle : 0x53
                     if (type === 0x53 && (i + 7) < data.length) {
                         const rollRaw  = readInt16LE(data, i + 2);
                         const pitchRaw = readInt16LE(data, i + 4);
@@ -187,7 +200,7 @@
                         document.getElementById('yaw').innerText   = yaw.toFixed(2);
                     }
 
-                    // Batterie / Voltage : 0x64 ou 0x71
+                    // Batterie : 0x64 ou 0x71
                     if ((type === 0x64 || type === 0x71) && (i + 3) < data.length) {
                         const vRaw = readInt16LE(data, i + 2);
                         if (vRaw > 0) {
