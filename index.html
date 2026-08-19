@@ -70,7 +70,7 @@
 </head>
 <body>
 
-    <h1>WitMotion WT9011DCL-2</h1>
+    <h1>WitMotion WT9011DCL-3</h1>
     <button id="connectBtn">Connecter le capteur BLE</button>
     <div id="status" class="status">Déconnecté</div>
 
@@ -225,18 +225,17 @@
             }
         }
 
-        function updateBatteryDisplay(vRaw) {
-            if (vRaw > 0) {
-                // Conversion corrigée : vRaw vaut ~41 pour 4.1V
-                const volts = vRaw / 10.0; 
-                
-                // Calcul LiPo 3.7V (3.4V = 0%, 4.1V = 100%)
-                let pct = Math.round(((volts - 3.4) / (4.1 - 3.4)) * 100);
-                pct = Math.max(0, Math.min(100, pct));
+       function updateBatteryDisplay(val) {
+    if (val > 0) {
+        // La valeur renvoyée est directement le pourcentage (ex: 42 = 42%)
+        let pct = Math.min(100, Math.max(0, val));
+        
+        // Estimation de la tension LiPo pour info (3.4V à 4.1V)
+        let volts = 3.4 + (pct / 100) * (4.1 - 3.4);
 
-                document.getElementById('batt').innerText = `${pct}% (${volts.toFixed(1)}V)`;
-            }
-        }
+        document.getElementById('batt').innerText = `${pct}% (${volts.toFixed(2)}V)`;
+    }
+}
 
         function readInt16LE(buffer, offset) {
             let val = buffer[offset] | (buffer[offset + 1] << 8);
