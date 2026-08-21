@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WitMotion WT9011DCL - Dashboard Complète</title>
+    <!-- Ajout de Chart.js pour les graphiques -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -65,6 +67,20 @@
         .batt-card .card-value { color: #ffeb3b; }
         .temp-card .card-value { color: #ff7043; }
         
+        /* Styles ajoutés pour les graphiques */
+        .chart-container {
+            width: 100%;
+            max-width: 650px;
+            background-color: #1e1e1e;
+            border-radius: 8px;
+            border: 1px solid #333;
+            padding: 10px;
+            box-sizing: border-box;
+            height: 250px;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+
         #debug {
             margin-top: 20px;
             width: 100%;
@@ -96,12 +112,24 @@
         <div class="card acc-card"><div class="card-title">Acc Z</div><div class="card-value"><span id="accZ">--</span></div></div>
     </div>
 
+    <!-- GRAPHIQUE ACCÉLÉRATION -->
+    <div class="section-title">Historique Accélération (100ms)</div>
+    <div class="chart-container">
+        <canvas id="accChart"></canvas>
+    </div>
+
     <!-- ANGLES -->
     <div class="section-title">Angles (°)</div>
     <div class="grid-container">
         <div class="card"><div class="card-title">Roll (X)</div><div class="card-value"><span id="roll">--</span>°</div></div>
         <div class="card"><div class="card-title">Pitch (Y)</div><div class="card-value"><span id="pitch">--</span>°</div></div>
         <div class="card"><div class="card-title">Yaw (Z)</div><div class="card-value"><span id="yaw">--</span>°</div></div>
+    </div>
+
+    <!-- GRAPHIQUE ANGLES -->
+    <div class="section-title">Historique Angles (100ms)</div>
+    <div class="chart-container">
+        <canvas id="angleChart"></canvas>
     </div>
 
     <!-- ÉTAT CAPTEUR -->
@@ -126,6 +154,65 @@
 
         let writeChar = null;
         let battInterval = null;
+        
+        // --- NOUVELLES VARIABLES POUR LES GRAPHIQUES ---
+        let chartInterval = null;
+        let accChartInstance = null;
+        let angleChartInstance = null;
+        const MAX_DATA_POINTS = 100; // Garde les 10 dernières secondes (100 pts x 100ms)
+        
+        // Variables pour stocker la dernière valeur lue afin de la sampler toutes les 100ms
+        let currentData = {
+            accX: 0, accY: 0, accZ: 0,
+            roll: 0, pitch: 0, yaw: 0
+        };
+
+        // --- INITIALISATION DES GRAPHIQUES ---
+        function initCharts() {
+            const commonOptions = {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false, // Désactivé pour la performance en temps réel
+                scales: {
+                    x: { display: false }, // Cache l'axe X pour un look plus épuré
+                    y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }
+                },
+                plugins: {
+                    legend: { labels: { color: '#e0e0e0' } }
+                }
+            };
+
+            const ctxAcc = document.getElementById('accChart').getContext('2d');
+            accChartInstance = new Chart(ctxAcc, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Acc X', borderColor: '#ff5252', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                        { label: 'Acc Y', borderColor: '#4caf50', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                        { label: 'Acc Z', borderColor: '#4fc3f7', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 }
+                    ]
+                },
+                options: commonOptions
+            });
+
+            const ctxAngle = document.getElementById('angleChart').getContext('2d');
+            angleChartInstance = new Chart(ctxAngle, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        { label: 'Roll', borderColor: '#ff5252', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                        { label: 'Pitch', borderColor: '#4caf50', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 },
+                        { label: 'Yaw', borderColor: '#4fc3f7', data: [], tension: 0.2, pointRadius: 0, borderWidth: 2 }
+                    ]
+                },
+                options: commonOptions
+            });
+        }
+        
+        // Initialiser les graphiques vides au chargement
+        initCharts();
 
         connectBtn.addEventListener('click', async () => {
             if (!navigator.bluetooth) {
@@ -146,6 +233,8 @@
                     statusDiv.innerText = "Déconnecté";
                     statusDiv.style.color = "#f44336";
                     if (battInterval) clearInterval(battInterval);
+                    // Arrêter la mise à jour des graphiques à la déconnexion
+                    if (chartInterval) clearInterval(chartInterval); 
                 });
 
                 const server = await device.gatt.connect();
@@ -174,12 +263,42 @@
                     await new Promise(r => setTimeout(r, 200));
                     await sendCmd(0x64); // Demander la batterie (Registre 0x64)
 
-                    // Rafraîchir Température + Batterie toutes les 10 secondes
+                    // Rafraîchir Température + Batterie toutes les 10 secondes (ou 100ms dans votre code d'origine)
                     battInterval = setInterval(async () => {
                         await sendCmd(0x40);
                         await sendCmd(0x64);
                     }, 100);
                 }
+                
+                // --- DÉMARRAGE DE L'ENREGISTREMENT DES GRAPHIQUES TOUTES LES 100MS ---
+                if (chartInterval) clearInterval(chartInterval);
+                chartInterval = setInterval(() => {
+                    const now = new Date().toLocaleTimeString();
+                    
+                    // Mise à jour du graphique d'accélération
+                    accChartInstance.data.labels.push(now);
+                    accChartInstance.data.datasets[0].data.push(currentData.accX);
+                    accChartInstance.data.datasets[1].data.push(currentData.accY);
+                    accChartInstance.data.datasets[2].data.push(currentData.accZ);
+                    
+                    if (accChartInstance.data.labels.length > MAX_DATA_POINTS) {
+                        accChartInstance.data.labels.shift();
+                        accChartInstance.data.datasets.forEach(ds => ds.data.shift());
+                    }
+                    accChartInstance.update();
+
+                    // Mise à jour du graphique des angles
+                    angleChartInstance.data.labels.push(now);
+                    angleChartInstance.data.datasets[0].data.push(currentData.roll);
+                    angleChartInstance.data.datasets[1].data.push(currentData.pitch);
+                    angleChartInstance.data.datasets[2].data.push(currentData.yaw);
+                    
+                    if (angleChartInstance.data.labels.length > MAX_DATA_POINTS) {
+                        angleChartInstance.data.labels.shift();
+                        angleChartInstance.data.datasets.forEach(ds => ds.data.shift());
+                    }
+                    angleChartInstance.update();
+                }, 100);
 
                 statusDiv.innerText = "Connecté !";
                 statusDiv.style.color = "#4caf50";
@@ -224,6 +343,14 @@
                         const roll  = (readInt16LE(data, i + 14) / 32768.0) * 180.0;
                         const pitch = (readInt16LE(data, i + 16) / 32768.0) * 180.0;
                         const yaw   = (readInt16LE(data, i + 18) / 32768.0) * 180.0;
+                        
+                        // Mettre à jour les variables globales pour les graphiques
+                        currentData.accX = accX;
+                        currentData.accY = accY;
+                        currentData.accZ = accZ;
+                        currentData.roll = roll;
+                        currentData.pitch = pitch;
+                        currentData.yaw = yaw;
 
                         document.getElementById('accX').innerText = accX.toFixed(2);
                         document.getElementById('accY').innerText = accY.toFixed(2);
