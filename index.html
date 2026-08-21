@@ -178,7 +178,7 @@
                     battInterval = setInterval(async () => {
                         await sendCmd(0x40);
                         await sendCmd(0x64);
-                    }, 10000);
+                    }, 100);
                 }
 
                 statusDiv.innerText = "Connecté !";
